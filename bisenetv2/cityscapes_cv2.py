@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 import bisenetv2.transform_cv2 as T
-from sampler import RepeatedDistSampler
+from bisenetv2.sampler import RepeatedDistSampler
 
 
 labels_info = [
@@ -123,12 +123,53 @@ class CityScapes(Dataset):
         return self.len
 
 
+class FaceMasks(Dataset):
+    '''
+    '''
+    def __init__(self, datapth, trans_func=None, mode='train'):
+        super(FaceMasks, self).__init__()
+        assert mode in ('train', 'val', 'test')
+        self.mode = mode
+        self.trans_func = trans_func
+
+        ## parse img directory
+        self.impth = osp.join(datapth, 'images')
+        self.gtpth = osp.join(datapth, 'labels')
+        self.names = [el[:-4] for el in os.listdir(self.impth)]
+
+
+        self.len = len(self.names)
+
+        self.to_tensor = T.ToTensor(
+            mean=(0.3257, 0.3690, 0.3223), # city, rgb
+            std=(0.2112, 0.2148, 0.2115),
+        )
+
+    def __getitem__(self, idx):
+        fn = self.names[idx]
+        impth, lbpth = osp.join(self.impth, f'{fn}.jpg'), osp.join(self.gtpth, f'{fn}.png')
+        img, label = cv2.imread(impth), cv2.imread(lbpth, 0)
+        label = label.clip(0, 1)
+        im_lb = dict(im=img, lb=label)
+        if not self.trans_func is None:
+            im_lb = self.trans_func(im_lb)
+        im_lb = self.to_tensor(im_lb)
+        img, label = im_lb['im'], im_lb['lb']
+        return img.detach(), label.unsqueeze(0).detach()
+
+    def __len__(self):
+        return self.len
+
+
+
+
 class TransformationTrain(object):
 
     def __init__(self):
         self.trans_func = T.Compose([
             #  T.RandomResizedCrop([0.375, 1.], [512, 1024]),
-            T.RandomResizedCrop([0.25, 2], [512, 1024]),
+            # T.RandomResizedCrop([0.25, 2], [512, 1024]),
+            T.RandomResizedCrop([0.9, 1.1], [224, 224]),
             T.RandomHorizontalFlip(),
             T.ColorJitter(
                 brightness=0.4,
@@ -150,7 +191,7 @@ class TransformationVal(object):
         return dict(im=im, lb=lb)
 
 
-def get_data_loader(datapth, ims_per_gpu, max_iter=None, mode='train', distributed=True):
+def get_data_loader(datapth, ims_per_gpu, max_iter=None, mode='train', distributed=True, dataset='CityScape'):
     train_trans_func = TransformationTrain()
     val_trans_func = TransformationVal()
     if mode == 'train':
@@ -164,7 +205,10 @@ def get_data_loader(datapth, ims_per_gpu, max_iter=None, mode='train', distribut
         shuffle = False
         drop_last = False
 
-    ds = CityScapes(datapth, trans_func=trans_func, mode=mode)
+    if dataset == 'CityScape':
+        ds = CityScapes(datapth, trans_func=trans_func, mode=mode)
+    elif dataset == 'FaceMask':
+        ds = FaceMasks(datapth, trans_func=trans_func, mode=mode)
 
     if distributed:
         assert dist.is_available(), "dist should be initialzed"

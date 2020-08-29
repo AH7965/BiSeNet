@@ -22,7 +22,25 @@ from bisenetv2.bisenetv2 import BiSeNetV2
 from bisenetv2.logger import setup_logger
 from bisenetv2.cityscapes_cv2 import get_data_loader
 
+def parse_args():
+    parse = argparse.ArgumentParser()
+    parse.add_argument('--local_rank', dest='local_rank', type=int, default=-1,)
+    parse.add_argument('--dataset', dest='dataset', type=str, default='CityScape',
+                       choices=['CityScape', 'FaceMask'])
+    parse.add_argument('--weight-path', dest='weight_pth', type=str,
+                       default='model_final.pth',)
+    parse.add_argument('--fp16', dest='use_fp16', action='store_true',)
+    parse.add_argument('--port', dest='port', type=int, default=44554,)
+    parse.add_argument('--respth', dest='respth', type=str, default='./res',)
+    parse.add_argument('--datapth', dest='datapth', type=str, default='./data',)
+    parse.add_argument('--bts', dest='batch_size', type=int, default=8,)
 
+    return parse.parse_args()
+
+args = parse_args()
+
+dataset = args.dataset
+datapth = args.datapth
 
 
 class MscEvalV0(object):
@@ -62,12 +80,16 @@ class MscEvalV0(object):
 
 def eval_model(net, ims_per_gpu):
     is_dist = dist.is_initialized()
-    dl = get_data_loader('./data', ims_per_gpu, mode='val', distributed=is_dist)
+    dl = get_data_loader(datapth, ims_per_gpu, mode='val', distributed=is_dist, dataset=dataset)
     net.eval()
 
     with torch.no_grad():
         single_scale = MscEvalV0()
-        mIOU = single_scale(net, dl, 19)
+        if dataset == 'CityScape':
+            mIOU = single_scale(net, dl, 19)
+        elif dataset == 'FaceMask':
+            mIOU = single_scale(net, dl, 2)
+    net.train()
     logger = logging.getLogger()
     logger.info('mIOU is: %s\n', mIOU)
 
@@ -77,7 +99,11 @@ def evaluate(weight_pth):
 
     ## model
     logger.info('setup and restore model')
-    net = BiSeNetV2(19)
+    if dataset == 'CityScape':
+        net = BiSeNetV2(19)
+    elif dataset == 'FaceMask':
+        net = BiSeNetV2(2)
+
     net.load_state_dict(torch.load(weight_pth))
     net.cuda()
 
@@ -94,15 +120,8 @@ def evaluate(weight_pth):
     eval_model(net, 2)
 
 
-def parse_args():
-    parse = argparse.ArgumentParser()
-    parse.add_argument('--local_rank', dest='local_rank',
-                       type=int, default=-1,)
-    parse.add_argument('--weight-path', dest='weight_pth', type=str,
-                       default='model_final.pth',)
-    parse.add_argument('--port', dest='port', type=int, default=44553,)
-    parse.add_argument('--respth', dest='respth', type=str, default='./res',)
-    return parse.parse_args()
+
+
 
 
 def main():
